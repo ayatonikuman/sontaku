@@ -87,8 +87,8 @@ cv.width = GW; cv.height = GH;
 const DEF = {
   // プレイヤー
   accel:0.55, friction:0.80, maxRun:3.4, jumpVel:9.2, lowG:0.34, highG:0.62, bounce:7.6,
-  // 敵
-  patrol:0.55, reactRadius:66, reactDelay:9, dodge:2.6, hop:6.4, assistRange:26, assistSpeed:2.2
+  // 敵（忖度を強めに：当たる方が難しい）
+  patrol:0.55, reactRadius:98, reactDelay:5, dodge:3.7, hop:7.0, assistRange:36, assistSpeed:2.9
 };
 const T = Object.assign({}, DEF);
 
@@ -134,7 +134,7 @@ function buildLevel(){
   enemies = [];
   const gy = GH-GROUND_H;
   const E = (x, min, max, y)=>({x, y:(y??gy)-16, w:16, h:16, vx:T.patrol, vy:0, dir:1,
-      min, max, alive:true, onGround:false, react:0, sweat:0, squash:0, deadT:0, facing:-1});
+      min, max, alive:true, onGround:false, react:0, aware:0, sweat:0, squash:0, deadT:0, facing:-1});
   // 単体（反応を味わう）
   enemies.push(E(360, 300, 410));
   enemies.push(E(640, 580, 720));
@@ -247,6 +247,10 @@ function update(){
 
     const descendingAbove = player.vy>0.3 && pcy < e.y+2;  // 上から落ちてくる
     const sameBand = (player.y+player.h>e.y+3) && (player.y<e.y+e.h-3); // 体の高さで衝突しうる
+    // 「気づき」カウンタ：体の高さで間合いに入っている間ためる（短い空中は減るだけ）。
+    // 反応の猶予(reactDelay)を使い切った敵は“もう避け切れる”＝当ててこない。不意打ちだけ通る。
+    if(dist<T.reactRadius && sameBand) e.aware=Math.min(e.aware+1,999);
+    else if(dist>=T.reactRadius) e.aware=Math.max(0,e.aware-2); // 間合い内なら空中(回避ジャンプ中)でも気づきは保つ
 
     let acted=false;
     // ① アシスト：踏もうとして外れても足元に潜り込む
@@ -262,7 +266,7 @@ function update(){
         const away=Math.sign(ecx-pcx)||1;
         e.vx=away*T.dodge;                       // ← 速さの上限。これより速く詰めると当たる
         e.sweat=10;
-        if(Math.abs(dx)<20 && e.onGround && T.hop>0){ e.vy=-T.hop; } // ヒヤッと飛び越え
+        if(Math.abs(dx)<22 && e.onGround && T.hop>0){ e.vy=-T.hop; } // 追い込まれたらヒヤッと飛び越え
         acted=true;
       }
     } else { e.react=0; }
@@ -286,7 +290,7 @@ function update(){
       if(stomp){
         e.alive=false; e.deadT=0; stomps++;
         player.vy=-T.bounce;
-      } else if(player.invuln<=0){
+      } else if(player.invuln<=0 && e.aware < T.reactDelay){  // 気づき切った敵は当ててこない＝不意打ちのみ被弾
         lives--; damage++; player.invuln=90;
         player.vx = (pcx<ecx? -3.5:3.5); player.vy=-4;
         if(lives<=0){ gameOver(); return; }
@@ -442,7 +446,9 @@ resetGame();
 requestAnimationFrame(loop);
 
 // デバッグ用（検証フック。製品では消してよい）
-window.DBG = { get player(){return player;}, get enemies(){return enemies;}, get info(){return {lives,damage,stomps,frames,cleared};}, T, input };
+window.DBG = { get player(){return player;}, get enemies(){return enemies;}, get info(){return {lives,damage,stomps,frames,cleared};}, T, input,
+  step(n=1){ for(let i=0;i<n && lives>0 && !cleared;i++) update(); return {lives,damage,stomps,frames,cleared,px:+player.x.toFixed(0)}; },
+  reset(){ resetGame(); } };
 </script>
 </body>
 </html>
