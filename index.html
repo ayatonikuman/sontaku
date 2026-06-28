@@ -30,13 +30,25 @@
   #over .num { font-size:20px; font-weight:bold; color:#ffd24f; }
   #over button { margin-top:8px; padding:12px 26px; font-size:17px; border:0; border-radius:10px;
     background:#ffd24f; color:#222; font-weight:bold; }
-  /* 裏クリアの祝福演出 */
-  #over.celebrate { background:radial-gradient(circle at 50% 38%, rgba(60,42,0,.92), rgba(8,10,16,.92)); }
-  #over.celebrate h1 { font-size:46px; letter-spacing:4px; color:#ffd24f;
-    text-shadow:0 0 22px rgba(255,210,79,.9), 0 0 6px rgba(255,255,255,.7);
-    animation:pop .55s cubic-bezier(.2,1.4,.4,1) both; }
-  #over.celebrate h1::before, #over.celebrate h1::after { content:'✦'; color:#ffe49a; padding:0 12px; font-size:28px; }
-  @keyframes pop { 0%{transform:scale(.3) rotate(-6deg); opacity:0;} 70%{transform:scale(1.18) rotate(2deg);} 100%{transform:scale(1) rotate(0); opacity:1;} }
+  /* ゲームオーバー＝隠し達成の祝福演出（文言は素っ気なく、演出は最大級） */
+  #over.celebrate { background:radial-gradient(circle at 50% 40%, rgba(70,48,0,.95), rgba(8,10,16,.96)); overflow:hidden; }
+  #over.celebrate h1 { position:relative; z-index:2; font-size:54px; letter-spacing:3px; font-weight:900;
+    background:linear-gradient(92deg,#ffec8a,#ff7a3d,#ffd24f,#fff,#ffd24f); -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 0 16px rgba(255,200,70,.95));
+    animation:pop .5s cubic-bezier(.2,1.5,.35,1) both, shake .6s ease-in-out .5s 2; }
+  #over.celebrate h1::before, #over.celebrate h1::after { content:'★'; -webkit-text-fill-color:#ffe49a; color:#ffe49a; padding:0 14px; }
+  #over.celebrate p, #over.celebrate button { position:relative; z-index:2; }
+  @keyframes pop { 0%{transform:scale(.2) rotate(-8deg); opacity:0;} 70%{transform:scale(1.22) rotate(3deg);} 100%{transform:scale(1) rotate(0); opacity:1;} }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px) rotate(-1deg)} 75%{transform:translateX(6px) rotate(1deg)} }
+  /* 放射状の光 */
+  .ray { position:absolute; top:38%; left:50%; width:240vmax; height:240vmax; transform:translate(-50%,-50%); z-index:0; pointer-events:none;
+    background:repeating-conic-gradient(from 0deg, rgba(255,221,120,.16) 0deg 7deg, transparent 7deg 14deg);
+    animation:spin 9s linear infinite; }
+  @keyframes spin { to{ transform:translate(-50%,-50%) rotate(360deg);} }
+  /* 紙吹雪 */
+  .confetti { position:absolute; top:-16px; z-index:1; border-radius:2px; pointer-events:none;
+    animation:fall linear forwards; }
+  @keyframes fall { 0%{ transform:translateY(0) rotate(0); opacity:1;} 100%{ transform:translateY(115vh) rotate(900deg); opacity:.9;} }
 
   /* 調整パネル */
   #gear { position:fixed; top:10px; right:10px; z-index:25; width:40px; height:40px; border-radius:8px;
@@ -95,7 +107,7 @@ const DEF = {
   // プレイヤー
   accel:0.55, friction:0.80, maxRun:3.4, jumpVel:9.2, lowG:0.34, highG:0.62, bounce:7.6,
   // 敵（忖度を強めに：当たる方が難しい）
-  patrol:0.55, reactRadius:98, reactDelay:5, dodge:3.7, hop:7.0, assistRange:36, assistSpeed:2.9
+  patrol:0.55, reactRadius:90, reactDelay:2, dodge:4, hop:7.0, assistRange:18, assistSpeed:2.9
 };
 const T = Object.assign({}, DEF);
 
@@ -284,23 +296,32 @@ function update(){
       e.vx=dir*Math.min(T.assistSpeed, Math.abs(dx));
       e.sweat=6; acted=true;
     }
-    // ② 回避：横から当たりそうなら避ける（反応の遅れ・速さの上限あり）
+    // ② 回避：横から当たりそうなら本気で避ける（反応の遅れ・速さの上限あり）
     else if(dist<T.reactRadius && sameBand){
       e.react++;
       if(e.react>=T.reactDelay){
-        const away=Math.sign(ecx-pcx)||1;
-        e.vx=away*T.dodge;                       // ← 速さの上限。これより速く詰めると当たる
+        let away=Math.sign(ecx-pcx)||1;
         e.sweat=10;
-        if(Math.abs(dx)<22 && e.onGround && T.hop>0){ e.vy=-T.hop; e.hopDodge=true; } // 追い込まれたらヒヤッと飛び越え（この間は当たり判定アリ＝読めば崩せる）
+        if(Math.abs(dx)<30 && e.onGround && T.hop>0){
+          // 逃げ先が壁／ステージ端でふさがってたら、プレイヤーを飛び越えて反対側へ
+          let blocked=(away>0 && e.x+e.w+12>=LEVEL_W) || (away<0 && e.x-12<=0);
+          if(!blocked){ const pr={x:e.x+away*12, y:e.y, w:e.w, h:e.h};
+            for(const s of solids){ if(s.y<GH-GROUND_H && overlap(pr,s)){ blocked=true; break; } } }
+          e.vy = blocked ? -(T.hop+3) : -T.hop;   // 壁際は高く跳んでプレイヤーを飛び越える
+          if(blocked) away=-away;
+          e.vx=away*Math.max(T.dodge, T.maxRun+1); e.hopDodge=true; // 横っ飛び（当たり判定アリ＝読めば崩せる）
+        } else {
+          e.vx=away*T.dodge;                     // ← 速さの上限。これより速く詰めると当たる
+        }
         acted=true;
       }
     } else { e.react=0; }
 
-    // ③ 通常巡回
+    // ③ 通常巡回（避けて巡回域を出ても瞬間移動せず歩いて戻る）
     if(!acted){
-      e.vx=e.dir*T.patrol;
-      if(e.x<=e.min){ e.x=e.min; e.dir=1; }
-      if(e.x+e.w>=e.max){ e.x=e.max-e.w; e.dir=-1; }
+      if(e.x < e.min) e.dir=1; else if(e.x+e.w > e.max) e.dir=-1;
+      const back = (e.x < e.min-2 || e.x+e.w > e.max+2) ? 1.8 : 1; // 域外なら少し早足で戻る
+      e.vx=e.dir*T.patrol*back;
     }
     if(e.x<0)e.x=0; if(e.x+e.w>LEVEL_W)e.x=LEVEL_W-e.w;
     e.facing=Math.sign(dx)||e.facing;
@@ -328,19 +349,35 @@ function update(){
   if(!cleared && player.x+player.w>goal.x){ cleared=true; clear(); }
 }
 
-// 3回被弾＝隠しの「裏クリア」。これが本当の達成。派手に祝う。
+// 3回被弾＝隠しの達成。文言は素っ気なく「ゲームオーバー」、でも演出は最大級に派手。
 function gameOver(){
   const t=(frames/60).toFixed(1);
-  showOver('うらクリア', `ついにやったぜ！<br><span class="num">${t}秒</span>`, true);
+  showOver('ゲームオーバー', `<span class="num">${t}秒</span>`, true);
 }
-// 普通のゴールは控えめ（こっちは“できて当たり前”）
-function clear(){ showOver('ゴール', '', false); }
+// 普通のゴールは控えめ。被弾数だけ出す（“当たれるかも”のヒント）
+function clear(){ showOver('ゴール', `被弾 <span class="num">${damage}</span>`, false); }
 function showOver(title,body,celebrate){
   document.getElementById('oTitle').textContent=title;
   document.getElementById('oBody').innerHTML=body;
   const o=document.getElementById('over');
+  o.querySelectorAll('.confetti,.ray').forEach(e=>e.remove());
   o.classList.toggle('celebrate', !!celebrate);
   o.style.display='flex';
+  if(celebrate) spawnFx(o);
+}
+function spawnFx(host){
+  // 放射状の光
+  const ray=document.createElement('div'); ray.className='ray'; host.appendChild(ray);
+  // 紙吹雪
+  for(let i=0;i<90;i++){ const c=document.createElement('div'); c.className='confetti';
+    c.style.left=Math.random()*100+'%';
+    c.style.background=`hsl(${Math.random()*360},95%,${55+Math.random()*20}%)`;
+    c.style.width=(6+Math.random()*7)+'px'; c.style.height=(10+Math.random()*10)+'px';
+    c.style.animationDelay=(Math.random()*0.7)+'s';
+    c.style.animationDuration=(1.1+Math.random()*1.4)+'s';
+    host.appendChild(c);
+  }
+  setTimeout(()=>host.querySelectorAll('.confetti,.ray').forEach(e=>e.remove()), 4200);
 }
 document.getElementById('oBtn').onclick=()=>resetGame();
 
