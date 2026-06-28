@@ -30,6 +30,13 @@
   #over .num { font-size:20px; font-weight:bold; color:#ffd24f; }
   #over button { margin-top:8px; padding:12px 26px; font-size:17px; border:0; border-radius:10px;
     background:#ffd24f; color:#222; font-weight:bold; }
+  /* 裏クリアの祝福演出 */
+  #over.celebrate { background:radial-gradient(circle at 50% 38%, rgba(60,42,0,.92), rgba(8,10,16,.92)); }
+  #over.celebrate h1 { font-size:46px; letter-spacing:4px; color:#ffd24f;
+    text-shadow:0 0 22px rgba(255,210,79,.9), 0 0 6px rgba(255,255,255,.7);
+    animation:pop .55s cubic-bezier(.2,1.4,.4,1) both; }
+  #over.celebrate h1::before, #over.celebrate h1::after { content:'✦'; color:#ffe49a; padding:0 12px; font-size:28px; }
+  @keyframes pop { 0%{transform:scale(.3) rotate(-6deg); opacity:0;} 70%{transform:scale(1.18) rotate(2deg);} 100%{transform:scale(1) rotate(0); opacity:1;} }
 
   /* 調整パネル */
   #gear { position:fixed; top:10px; right:10px; z-index:25; width:40px; height:40px; border-radius:8px;
@@ -134,7 +141,7 @@ function buildLevel(){
   enemies = [];
   const gy = GH-GROUND_H;
   const E = (x, min, max, y)=>({x, y:(y??gy)-16, w:16, h:16, vx:T.patrol, vy:0, dir:1,
-      min, max, alive:true, onGround:false, react:0, aware:0, sweat:0, squash:0, deadT:0, facing:-1});
+      min, max, alive:true, onGround:false, react:0, aware:0, sweat:0, squash:0, deadT:0, facing:-1, hopDodge:false});
   // 単体（反応を味わう）
   enemies.push(E(360, 300, 410));
   enemies.push(E(640, 580, 720));
@@ -179,16 +186,34 @@ function setKey(e,down){
 }
 addEventListener('keydown',e=>setKey(e,true));
 addEventListener('keyup',e=>setKey(e,false));
-function bindBtn(id,prop){
-  const el=document.getElementById(id);
-  const on=e=>{input[prop]=true; e.preventDefault();};
-  const off=e=>{input[prop]=false; e.preventDefault();};
-  el.addEventListener('touchstart',on,{passive:false});
-  el.addEventListener('touchend',off,{passive:false});
-  el.addEventListener('touchcancel',off,{passive:false});
-  el.addEventListener('mousedown',on); el.addEventListener('mouseup',off); el.addEventListener('mouseleave',off);
+// タッチ：指が乗っているボタンを毎フレーム判定（指をスライドして左右を移っても追従する）
+const bEls={left:document.getElementById('bLeft'), right:document.getElementById('bRight'), jump:document.getElementById('bJump')};
+const overEl=document.getElementById('over');
+function inEl(x,y,el){ const r=el.getBoundingClientRect();
+  const mx=14; // 指のはみ出しを許容（隙間を滑っても切れない）
+  return x>=r.left-mx && x<=r.right+mx && y>=r.top-mx && y<=r.bottom+mx; }
+function refreshTouch(e){
+  if(overEl.style.display==='flex') return;          // 結果画面中はボタンのclickを優先
+  input.left=input.right=input.jump=false;
+  for(let i=0;i<e.touches.length;i++){ const t=e.touches[i], x=t.clientX, y=t.clientY;
+    if(inEl(x,y,bEls.left)) input.left=true;
+    if(inEl(x,y,bEls.right)) input.right=true;
+    if(inEl(x,y,bEls.jump)) input.jump=true;
+  }
+  // どれかに乗っていればスクロール等を抑止
+  if(input.left||input.right||input.jump) e.preventDefault();
 }
-bindBtn('bLeft','left'); bindBtn('bRight','right'); bindBtn('bJump','jump');
+document.addEventListener('touchstart',refreshTouch,{passive:false});
+document.addEventListener('touchmove',refreshTouch,{passive:false});
+document.addEventListener('touchend',refreshTouch,{passive:false});
+document.addEventListener('touchcancel',refreshTouch,{passive:false});
+// マウス（PCでの確認用）
+function bindMouse(prop){ const el=bEls[prop];
+  el.addEventListener('mousedown',e=>{input[prop]=true; e.preventDefault();});
+  addEventListener('mouseup',()=>{input[prop]=false;});
+  el.addEventListener('mouseleave',()=>{input[prop]=false;});
+}
+bindMouse('left'); bindMouse('right'); bindMouse('jump');
 
 // ---------- 物理ヘルパ ----------
 function overlap(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
@@ -266,7 +291,7 @@ function update(){
         const away=Math.sign(ecx-pcx)||1;
         e.vx=away*T.dodge;                       // ← 速さの上限。これより速く詰めると当たる
         e.sweat=10;
-        if(Math.abs(dx)<22 && e.onGround && T.hop>0){ e.vy=-T.hop; } // 追い込まれたらヒヤッと飛び越え
+        if(Math.abs(dx)<22 && e.onGround && T.hop>0){ e.vy=-T.hop; e.hopDodge=true; } // 追い込まれたらヒヤッと飛び越え（この間は当たり判定アリ＝読めば崩せる）
         acted=true;
       }
     } else { e.react=0; }
@@ -281,6 +306,7 @@ function update(){
     e.facing=Math.sign(dx)||e.facing;
 
     moveX(e); moveY(e);
+    if(e.onGround) e.hopDodge=false;   // 着地したら回避ジャンプ終了
     // 巡回域に戻す（避けた後ゆっくり帰る）
     if(!acted){ if(e.x<e.min-1)e.dir=1; if(e.x+e.w>e.max+1)e.dir=-1; }
 
@@ -290,7 +316,7 @@ function update(){
       if(stomp){
         e.alive=false; e.deadT=0; stomps++;
         player.vy=-T.bounce;
-      } else if(player.invuln<=0 && e.aware < T.reactDelay){  // 気づき切った敵は当ててこない＝不意打ちのみ被弾
+      } else if(player.invuln<=0 && (e.aware < T.reactDelay || e.hopDodge)){  // 不意打ち、または回避ジャンプ中に突っ込めば被弾＝崩せる
         lives--; damage++; player.invuln=90;
         player.vx = (pcx<ecx? -3.5:3.5); player.vy=-4;
         if(lives<=0){ gameOver(); return; }
@@ -302,21 +328,19 @@ function update(){
   if(!cleared && player.x+player.w>goal.x){ cleared=true; clear(); }
 }
 
-function gameOver(){ showOver('やられた…','ライフが尽きた。<br>敵は守ってくれてたのに、攻めすぎたね。', 'もう一回'); }
-function clear(){
+// 3回被弾＝隠しの「裏クリア」。これが本当の達成。派手に祝う。
+function gameOver(){
   const t=(frames/60).toFixed(1);
-  showOver('クリア！',
-    `この区間の被弾：<span class="num">${damage}</span><br>`+
-    `踏んだ敵：${stomps}　タイム：${t}秒<br><br>`+
-    (damage===0? 'ノーダメージ。世界に守られきった。<br><b>…0以外にできると思う？</b>'
-               : 'お、忖度を破ったね。'),
-    'もう一回');
+  showOver('うらクリア', `ついにやったぜ！<br><span class="num">${t}秒</span>`, true);
 }
-let overCb=resetGame;
-function showOver(title,body){
+// 普通のゴールは控えめ（こっちは“できて当たり前”）
+function clear(){ showOver('ゴール', '', false); }
+function showOver(title,body,celebrate){
   document.getElementById('oTitle').textContent=title;
   document.getElementById('oBody').innerHTML=body;
-  document.getElementById('over').style.display='flex';
+  const o=document.getElementById('over');
+  o.classList.toggle('celebrate', !!celebrate);
+  o.style.display='flex';
 }
 document.getElementById('oBtn').onclick=()=>resetGame();
 
@@ -386,11 +410,6 @@ function draw(){
 
   // HUD
   for(let i=0;i<3;i++){ drawHeart(10+i*18, 12, i<lives); }
-  ctx.fillStyle='#fff'; ctx.font='bold 12px system-ui'; ctx.textAlign='center';
-  ctx.fillText('ダメージ '+damage, GW/2, 18);
-  ctx.textAlign='right'; ctx.font='11px system-ui';
-  ctx.fillText((frames/60).toFixed(1)+'s', GW-8, 16);
-  ctx.textAlign='left';
 }
 function roundRect(x,y,w,h,r){ ctx.beginPath();
   ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
